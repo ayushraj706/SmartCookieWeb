@@ -3,12 +3,12 @@ name: Build Ayush Privacy Browser
 on:
   workflow_dispatch: # Manual build button ke liye
   push:
-    branches: [ master ] # Jab bhi code push karo tab bhi build ho jaye
+    branches: [ master ] # Push par bhi chalega
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Build zyada der na fase isliye timeout
+    timeout-minutes: 20
 
     steps:
       - name: 📂 Checkout Code
@@ -19,29 +19,20 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle' # Gradle cache enable kiya h taaki build fast ho
+          cache: 'gradle'
 
-      - name: 🛠️ Grant execute permission for gradlew
+      - name: 🛠️ Grant execute permission
         run: chmod +x gradlew
 
-      # --- 💾 GRADLE CACHE (Build fast karne ke liye) ---
-      - name: 💾 Cache Gradle Packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: 🚀 Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace # Stacktrace se error saaf dikhta h
+      - name: 🚀 Build Debug APK (Quiet Mode)
+        # --quiet flag se faltu ke logs band ho jayenge
+        # clean assembleDebug se purana kachra saaf ho jayega
+        run: ./gradlew clean assembleDebug --quiet --no-daemon
 
       - name: ✅ Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AyushBrowser-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk 
-          retention-days: 7 # 7 din tak APK download kar sakoge
+          name: AyushBrowser-Debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
           
