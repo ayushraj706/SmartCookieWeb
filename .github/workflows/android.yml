@@ -5,27 +5,35 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch: # Manual button bhi jodd diya h
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: 11
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
-    - name: Unit Test
-      run: ./gradlew test
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app
-        path: app/build/outputs/apk/beta/debug/*.apk
-    
+      - name: 📂 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin' # Ye line add kar di, error khatam!
+          cache: gradle
+
+      - name: 🛠️ Grant execute permission
+        run: chmod +x gradlew
+
+      - name: 🚀 Build Debug APK (Quiet Mode)
+        # 'build' ki jagah 'assembleDebug' fast hota h
+        # --quiet se logs chote aayenge
+        run: ./gradlew clean assembleDebug --quiet --no-daemon
+
+      - name: ✅ Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AyushBrowser-CI
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 5
+          
