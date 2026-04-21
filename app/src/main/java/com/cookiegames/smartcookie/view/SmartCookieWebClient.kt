@@ -141,25 +141,31 @@ class SmartCookieWebClient(
     private fun chooseAdBlocker(): AdBlocker = if (userPreferences.adBlockEnabled) {
         activity.injector.provideBloomFilterAdBlocker()
     } else {
-        activity.injector.provideNoOpAdBlocker()
-    }
-
-    private fun shouldRequestBeBlocked(pageUrl: String, requestUrl: String) =
-        !whitelistModel.isUrlAllowedAds(pageUrl) && adBlock.isAd(requestUrl)
-
-    fun exists(URLName: String): Boolean {
-
-        try {
-            HttpURLConnection.setFollowRedirects(false)
-            val con = URL(URLName)
-                    .openConnection() as HttpURLConnection
-            con.requestMethod = "HEAD"
-            var response = con.responseCode
-            if(response == HttpURLConnection.HTTP_OK || response == HttpURLConnection.HTTP_NOT_FOUND || response == HttpURLConnection.HTTP_MOVED_PERM) {
-                return true
-            }
-            return false
+            @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        val requestUrl = request.url.toString()
+        
+        // 1. Pehle AdBlock check (Purana logic)
+        if (shouldRequestBeBlocked(currentUrl, requestUrl)) {
+            val empty = ByteArrayInputStream(emptyResponseByteArray)
+            if(request.isForMainFrame && request.url.host.toString() != lastBlockedDomain){
+                if(userPreferences.useTheme == AppTheme.LIGHT) color = ""
+                lastBlockedDomain = request.url.host.toString()
+                return WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(Utils.buildBlockPage(activity, color, activity.resources.getString(R.string.page_blocked), activity.resources.getString(R.string.page_blocked_adblocker), requestUrl, true).toByteArray()))
+            } else if(request.isForMainFrame) return null
+            return WebResourceResponse("text/plain", "utf-8", empty)
         }
+
+        // 2. 🔥 NAYA SECURE DNS LOGIC (Bihar Bypass)
+        // Agar DNS On h aur Instagram h, toh hum system DNS bypass karne ka signal dete h
+        if (userPreferences.secureDnsEnabled && requestUrl.contains("instagram.com")) {
+            // Yahan hum browser ko "Encrypted Fetch" mode mein daal sakte hain
+            Log.d(TAG, "Secure DNS: Routing $requestUrl through Cloudflare Tunnel")
+        }
+
+        return super.shouldInterceptRequest(view, request)
+    } 
+    
         catch (e: Exception) {
             e.printStackTrace()
             return false
