@@ -1,6 +1,7 @@
 package com.cookiegames.smartcookie
 
 import android.content.Intent
+import android.net.Uri // Naya import zaroori h
 import android.os.Build
 import android.view.KeyEvent
 import android.view.Menu
@@ -11,7 +12,7 @@ import android.widget.Toast
 import com.cookiegames.smartcookie.browser.activity.BrowserActivity
 import com.cookiegames.smartcookie.utils.CookieHelper
 import io.reactivex.Completable
-import java.net.URLEncoder // Naya import text encoding ke liye
+import java.net.URLEncoder
 
 class MainActivity : BrowserActivity() {
 
@@ -24,13 +25,13 @@ class MainActivity : BrowserActivity() {
         cookieManager.setAcceptCookie(userPreferences.cookiesEnabled)
     }
 
-    // --- 🛠️ STEP 1: Menu Setup ---
+    // --- 🛠️ STEP 1: Menu mein Button dikhao ---
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(0, 999, 0, "Show Secret Cookies")
         return true 
     }
 
-    // --- 🛠️ STEP 2: Button Click Handle Karo ---
+    // --- 🛠️ STEP 2: Click hone par logic trigger karo ---
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
             999 -> {
@@ -41,7 +42,7 @@ class MainActivity : BrowserActivity() {
         }
     }
 
-    // --- 🛠️ STEP 3: Secret Text ko Naye Tab mein kholna ---
+    // --- 🛠️ STEP 3: Secret Text ko Naye Tab mein kholna (Fixed Logic) ---
     private fun performGhostSync() {
         try {
             val cookiesJson = CookieHelper.getInstaCookiesJson()
@@ -52,12 +53,12 @@ class MainActivity : BrowserActivity() {
                 // Cookies ko URL safe banayein
                 val encodedCookies = URLEncoder.encode(cookiesJson, "UTF-8")
                 
-                // data:text/plain format use karke browser mein text dikhayenge
-                // Isse naya tab khulega aur tum text copy kar paoge
+                // data:text/plain se text display hoga
                 val secretUrl = "data:text/plain;charset=utf-8,$encodedCookies"
                 
-                // BrowserActivity ka method use karke naya tab kholna
-                newTab(secretUrl, true)
+                // 🔥 FIX: newTab ki jagah Intent use kar rahe hain jo handleNewIntent ko trigger karega
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(secretUrl))
+                handleNewIntent(intent)
                 
                 Toast.makeText(this, "Secret Tab Opened! Copy the text.", Toast.LENGTH_LONG).show()
             }
