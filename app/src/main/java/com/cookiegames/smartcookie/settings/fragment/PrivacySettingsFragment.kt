@@ -155,6 +155,18 @@ class PrivacySettingsFragment : AbstractSettingsFragment() {
                 onCheckChange = { userPreferences.incognito = it }
         )
 
+        // 🔥 NAYA FEATURE: Secure DNS (DNS over HTTPS) logic added here
+        switchPreference(
+            preference = SETTINGS_SECURE_DNS,
+            isChecked = userPreferences.secureDnsEnabled,
+            onCheckChange = { 
+                userPreferences.secureDnsEnabled = it 
+                if (it) {
+                    Toast.makeText(context, "Secure DNS Enabled (Cloudflare 1.1.1.1)", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+
     }
 
     private fun PasswordChoice.toSummary(): String {
@@ -366,6 +378,8 @@ class PrivacySettingsFragment : AbstractSettingsFragment() {
         private const val SETTINGS_ONLY_CLOSE = "only_clear"
         private const val SETTINGS_APP_LOCK = "app_lock"
         private const val SETTINGS_CLEAR_ALL = "clear_all"
+        // 🔥 Naya Key Constant
+        private const val SETTINGS_SECURE_DNS = "use_secure_dns"
     }
 
 }
