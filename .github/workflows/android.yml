@@ -27,19 +27,20 @@ jobs:
         run: chmod +x gradlew
 
       - name: 🚀 Build All Debug Flavors
-        # assembleDebug se APK banti h
+        # Clean build karna hamesha safe rehta h
         run: ./gradlew clean assembleDebug --no-daemon
 
-      - name: 🔍 List APKs (Debug)
-        # Isse log mein dikhega file kahan h
+      - name: 🔍 Check APK Location (Logs)
+        # Isse humein log mein dikhega ki file asliyat mein kahan gayi
         run: find . -name "*.apk"
 
-      - name: ✅ Final APK Download Button (Artifact)
+      - name: ✅ Final APK Download Button
         uses: actions/upload-artifact@v4
         with:
-          # Is naam se tumhara download button dikhega
-          name: AyushBrowser-Direct-APK 
-          # Ye path ensure karta h ki sirf asli APK mile
-          path: app/build/outputs/apk/**/debug/*.apk
+          name: AyushBrowser-Debug-Builds
+          # Poore project mein search karega, ab miss hone ka sawal hi nahi h
+          path: "**/*.apk"
+          # Agar file na mile toh build fail ho jaye, taaki humein pata chale
+          if-no-files-found: error 
           retention-days: 5
           
