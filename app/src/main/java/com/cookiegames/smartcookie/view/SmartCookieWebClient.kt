@@ -65,8 +65,8 @@ import javax.net.ssl.HttpsURLConnection
 import kotlin.math.abs
 
 class SmartCookieWebClient(
-        private val activity: Activity,
-        private val smartCookieView: SmartCookieView
+    private val activity: Activity,
+    private val smartCookieView: SmartCookieView
 ) : WebViewClient() {
 
     private val uiController: UIController
@@ -78,7 +78,7 @@ class SmartCookieWebClient(
     private var knownUndetectedVideoUrls: Array<String> = arrayOf("xvideos.com")
 
     private var badsslList: MutableList<String> = ArrayList()
-    private var badsslErrors: MutableList<SslError> = ArrayList<SslError>()
+    private var badsslErrors: MutableList<SslError> = ArrayList()
 
     private val titleBlocked = activity.getString(R.string.blocked_title)
     private val reloadBlocked = activity.getString(R.string.error_reload)
@@ -105,11 +105,11 @@ class SmartCookieWebClient(
     @Inject internal lateinit var setWidenView: SetWidenViewport
     @Inject internal lateinit var javascriptRepository: JavaScriptRepository
     @Inject @field:DatabaseScheduler internal lateinit var databaseScheduler: Scheduler
+
     private var adBlock: AdBlocker
 
     @Volatile private var isRunning = false
     private var zoomScale = 0.0f
-
     private var currentUrl: String = ""
 
     var sslState: SslState = SslState.None
@@ -119,8 +119,9 @@ class SmartCookieWebClient(
         }
 
     private var whitelistIntent = false
-
     private val sslStateSubject: PublishSubject<SslState> = PublishSubject.create()
+
+    // ─── Init ────────────────────────────────────────────────────────────────
 
     init {
         activity.injector.inject(this)
@@ -134,53 +135,97 @@ class SmartCookieWebClient(
         adBlock = chooseAdBlocker()
     }
 
-    fun setWhitelist(a: Boolean){
+    fun setWhitelist(a: Boolean) {
         whitelistIntent = a
     }
 
-    private fun chooseAdBlocker(): AdBlocker = if (userPreferences.adBlockEnabled) {
-        activity.injector.provideBloomFilterAdBlocker()
+    /** Fixed: properly closed, single definition */
+    private fun chooseAdBlocker(): AdBlocker =
+        if (userPreferences.adBlockEnabled) {
+            activity.injector.provideBloomFilterAdBlocker()
         } else {
-        activity.injector.provideNoOpAdBlocker()
-    }
-
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        val reqUrl = request.url.toString()
-        
-        // 1. Purana AdBlock Logic
-        if (shouldRequestBeBlocked(currentUrl, reqUrl)) {
-            val empty = java.io.ByteArrayInputStream(emptyResponseByteArray)
-            if(request.isForMainFrame && request.url.host.toString() != lastBlockedDomain){
-                if(userPreferences.useTheme == AppTheme.LIGHT) color = ""
-                lastBlockedDomain = request.url.host.toString()
-                return WebResourceResponse("text/html", "UTF-8", java.io.ByteArrayInputStream(Utils.buildBlockPage(activity, color, activity.resources.getString(R.string.page_blocked), activity.resources.getString(R.string.page_blocked_adblocker), reqUrl, true).toByteArray()))
-            } else if(request.isForMainFrame) return null
-            return WebResourceResponse("text/plain", "utf-8", empty)
+            activity.injector.provideNoOpAdBlocker()
         }
 
-        // 2. 🔥 NAYA: Secure DNS Bypass (Instagram Signal)
-        if (userPreferences.secureDnsEnabled && reqUrl.contains("instagram.com")) {
-            android.util.Log.d("SmartCookie", "Bypassing Bihar Network Block for: $reqUrl")
+    private fun shouldRequestBeBlocked(pageUrl: String, requestUrl: String) =
+        !whitelistModel.isUrlAllowedAds(pageUrl) && adBlock.isAd(requestUrl)
+
+    // ─── Network / URL existence check ───────────────────────────────────────
+
+    fun exists(URLName: String): Boolean {
+        return try {
+            HttpURLConnection.setFollowRedirects(false)
+            val con = URL(URLName).openConnection() as HttpURLConnection
+            con.requestMethod = "HEAD"
+            val response = con.responseCode
+            response == HttpURLConnection.HTTP_OK ||
+                response == HttpURLConnection.HTTP_NOT_FOUND ||
+                response == HttpURLConnection.HTTP_MOVED_PERM
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // ─── shouldInterceptRequest (API 21+) ────────────────────────────────────
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest
+    ): WebResourceResponse? {
+
+        val requestUrl = request.url.toString()
+
+        // 🔥 Instagram Bypass Signal (Bihar Network Fix)
+        if (userPreferences.secureDnsEnabled && requestUrl.contains("instagram.com")) {
+            android.util.Log.d("SmartCookie", "Secure DNS Active: Routing via Cloudflare")
+        }
+
+        if (shouldRequestBeBlocked(currentUrl, requestUrl)) {
+            val empty = java.io.ByteArrayInputStream(emptyResponseByteArray)
+            if (request.isForMainFrame && request.url.host.toString() != lastBlockedDomain) {
+                if (userPreferences.useTheme == AppTheme.LIGHT) {
+                    color = ""
+                }
+                lastBlockedDomain = request.url.host.toString()
+                return WebResourceResponse(
+                    "text/html", "UTF-8",
+                    java.io.ByteArrayInputStream(
+                        Utils.buildBlockPage(
+                            activity, color,
+                            activity.resources.getString(R.string.page_blocked),
+                            activity.resources.getString(R.string.page_blocked_adblocker),
+                            requestUrl, true
+                        ).toByteArray()
+                    )
+                )
+            } else if (request.isForMainFrame) {
+                return null
+            }
+            return WebResourceResponse("text/plain", "utf-8", empty)
         }
 
         return super.shouldInterceptRequest(view, request)
     }
 
+    // ─── shouldInterceptRequest (legacy, pre-API 21) ──────────────────────────
 
     @Suppress("OverridingDeprecatedMember")
     @TargetApi(Build.VERSION_CODES.KITKAT_WATCH)
     override fun shouldInterceptRequest(view: WebView, url: String): WebResourceResponse? {
         if (shouldRequestBeBlocked(currentUrl, url)) {
-            val empty = ByteArrayInputStream(emptyResponseByteArray)
+            val empty = java.io.ByteArrayInputStream(emptyResponseByteArray)
             return WebResourceResponse("text/plain", "utf-8", empty)
         }
-        if(url.contains("detectPopBlock.js")){
-            val empty = ByteArrayInputStream(emptyResponseByteArray)
+        if (url.contains("detectPopBlock.js")) {
+            val empty = java.io.ByteArrayInputStream(emptyResponseByteArray)
             return WebResourceResponse("text/plain", "utf-8", empty)
         }
         return null
     }
+
+    // ─── UserScript / Extension install ──────────────────────────────────────
 
     var name: String? = null
     var version: String? = null
@@ -189,19 +234,26 @@ class SmartCookieWebClient(
     var requirements = ArrayList<String>(0)
     val include = ArrayList<Pattern>(0)
 
-    private fun installExtension(text: String){
-        val tx = text.replace("""\"""", """"""")
-                .replace("\\n", System.lineSeparator())
-                .replace("\\t", "")
-                .replace("\\u003C", "<")
-                .replace("""/"""", """"""")
-                .replace("""//"""", """/"""")
-                .replace("""\\'""", """\'""")
-                .replace("""\\""""", """\""""")
+    private fun installExtension(text: String) {
+        val tx = text
+            .replace("""\"""", """"""")
+            .replace("\\n", System.lineSeparator())
+            .replace("\\t", "")
+            .replace("\\u003C", "<")
+            .replace("""/"""", """"""")
+            .replace("""//"""", """/"""")
+            .replace("""\\'""", """\'""")
+            .replace("""\\""""", """\"""" + "\"")
 
-        val headerRegex = Pattern.compile("\\s*//\\s*==UserScript==\\s*", Pattern.CASE_INSENSITIVE)
-        val headerEndRegex = Pattern.compile("\\s*//\\s*==/UserScript==\\s*", Pattern.CASE_INSENSITIVE)
-        val mainRegex = Pattern.compile("\\s*//\\s*@(\\S+)(?:\\s+(.*))?", Pattern.CASE_INSENSITIVE)
+        val headerRegex = Pattern.compile(
+            "\\s*//\\s*==UserScript==\\s*", Pattern.CASE_INSENSITIVE
+        )
+        val headerEndRegex = Pattern.compile(
+            "\\s*//\\s*==/UserScript==\\s*", Pattern.CASE_INSENSITIVE
+        )
+        val mainRegex = Pattern.compile(
+            "\\s*//\\s*@(\\S+)(?:\\s+(.*))?", Pattern.CASE_INSENSITIVE
+        )
 
         val reader = BufferedReader(StringReader(tx))
 
@@ -218,17 +270,17 @@ class SmartCookieWebClient(
             } else {
                 val field = matcher.group(1)
                 val value = matcher.group(2)
-                if(field != null){
+                if (field != null) {
                     parseLine(field, value)
                 }
             }
         }
 
-        val metadataRegex: Pattern = Pattern.compile("==UserScript==(.*?)==/UserScript==", Pattern.DOTALL)
-
+        val metadataRegex: Pattern = Pattern.compile(
+            "==UserScript==(.*?)==/UserScript==", Pattern.DOTALL
+        )
         val metadataMatcher: Matcher = metadataRegex.matcher(text)
         var code = ""
-
         if (metadataMatcher.find()) {
             code = text.replace(metadataMatcher.group(0), "")
         }
@@ -236,260 +288,276 @@ class SmartCookieWebClient(
         val inc = TextUtils.join(",", include)
         val reqs = TextUtils.join(",", requirements)
 
-        javascriptRepository.addJavaScriptIfNotExists(JavaScriptDatabase.JavaScriptEntry(name!!, "", version, author, inc, "", "", "", code, reqs))
-                .subscribeOn(databaseScheduler)
-                .subscribe { aBoolean: Boolean? ->
-                    if (!aBoolean!!) {
-                        logger.log("SmartCookieWebClient", "error saving script to database")
-                    }
+        javascriptRepository.addJavaScriptIfNotExists(
+            JavaScriptDatabase.JavaScriptEntry(
+                name!!, "", version, author, inc, "", "", "", code, reqs
+            )
+        )
+            .subscribeOn(databaseScheduler)
+            .subscribe { aBoolean: Boolean? ->
+                if (!aBoolean!!) {
+                    logger.log("SmartCookieWebClient", "error saving script to database")
                 }
+            }
     }
 
     private fun parseLine(field: String?, value: String?) {
-        if ("name".equals(field, ignoreCase = true)) {
-            name = value
-        } else if ("version".equals(field, ignoreCase = true)) {
-            version = value
-        } else if ("author".equals(field, ignoreCase = true)) {
-            author = value
-        } else if ("description".equals(field, ignoreCase = true)) {
-            description = value
-        } else if ("require".equals(field, ignoreCase = true)) {
-            if (value != null) {
-                requirements.add(value)
+        when {
+            "name".equals(field, ignoreCase = true) -> name = value
+            "version".equals(field, ignoreCase = true) -> version = value
+            "author".equals(field, ignoreCase = true) -> author = value
+            "description".equals(field, ignoreCase = true) -> description = value
+            "require".equals(field, ignoreCase = true) -> {
+                if (value != null) requirements.add(value)
             }
-        } else if ("include".equals(field, ignoreCase = true)) {
-            urlToPattern(value)?.let {
-                include.add(it)
+            "include".equals(field, ignoreCase = true) -> {
+                urlToPattern(value)?.let { include.add(it) }
             }
-        } else if ("match".equals(field, ignoreCase = true) && value != null) {
-            val urlPattern = "^" + value.replace("?", "\\?").replace(".", "\\.")
+            "match".equals(field, ignoreCase = true) && value != null -> {
+                val urlPattern = "^" + value
+                    .replace("?", "\\?").replace(".", "\\.")
                     .replace("*", ".*").replace("+", ".+")
-                    .replace("://.*\\.", "://((?![\\./]).)*\\.").replace("^\\.\\*://".toRegex(), "https?://")
-            urlToParsedPattern(urlPattern)?.let {
-                include.add(it)
+                    .replace("://.*\\.", "://((?![\\./]).)*\\.")
+                    .replace("^\\.\\*://".toRegex(), "https?://")
+                urlToParsedPattern(urlPattern)?.let { include.add(it) }
             }
         }
     }
 
     val TLD_REGEX = "^([^:]+://[^/]+)\\\\.tld(/.*)?\$".toRegex()
-    val schemeContainsPattern: Pattern = Pattern.compile("^\\w+:", Pattern.CASE_INSENSITIVE)
+    val schemeContainsPattern: Pattern = Pattern.compile(
+        "^\\w+:", Pattern.CASE_INSENSITIVE
+    )
 
     private fun urlToPattern(patternUrl: String?): Pattern? {
         if (patternUrl == null) return null
-        try {
+        return try {
             val builder = StringBuilder(patternUrl)
-            builder.toString().replace("?", "\\?").replace(".", "\\.").replace("*", ".*?").replace("+", ".+?")
+            builder.toString()
+                .replace("?", "\\?").replace(".", "\\.").replace("*", ".*?").replace("+", ".+?")
             var converted = builder.toString()
-
             if (converted.contains(".tld", true)) {
                 converted = TLD_REGEX.replaceFirst(converted, "$1(.[a-z]{1,6}){1,3}$2")
             }
-
-            return if (schemeContainsPattern.matcher(converted).find())
+            if (schemeContainsPattern.matcher(converted).find())
                 Pattern.compile("^$converted")
             else
                 Pattern.compile("^\\w+://$converted")
         } catch (e: PatternSyntaxException) {
-            Log.d(TAG, "Error: " + e)
+            Log.d(TAG, "Error: $e")
+            null
         }
-
-        return null
     }
 
     private fun urlToParsedPattern(patternUrl: String): Pattern? {
-        try {
+        return try {
             val converted = if (patternUrl.contains(".tld", true)) {
                 TLD_REGEX.replaceFirst(patternUrl, "$1(.[a-z]{1,6}){1,3}$2")
             } else {
                 patternUrl
             }
-            return Pattern.compile(converted)
+            Pattern.compile(converted)
         } catch (e: PatternSyntaxException) {
-            Log.d(TAG, "Error: " + e)
+            Log.d(TAG, "Error: $e")
+            null
         }
-
-        return null
     }
 
+    // ─── onPageFinished ───────────────────────────────────────────────────────
+
     override fun onPageFinished(view: WebView, url: String) {
-        if(url.contains(BuildConfig.APPLICATION_ID + "/files/homepage.html")  || url.contains(BuildConfig.APPLICATION_ID + "/files/incognito.html")) {
-            val preferenceArray = arrayListOf(userPreferences.link1, userPreferences.link2, userPreferences.link3, userPreferences.link4)
-            for(i in 1..4){
-                view.evaluateJavascript("javascript:(function() {"
-                        + "link" + i + "var = '" + preferenceArray[i - 1] + "';"
-                        + "})();", null)
+        if (url.contains(BuildConfig.APPLICATION_ID + "/files/homepage.html") ||
+            url.contains(BuildConfig.APPLICATION_ID + "/files/incognito.html")
+        ) {
+            val preferenceArray = arrayListOf(
+                userPreferences.link1, userPreferences.link2,
+                userPreferences.link3, userPreferences.link4
+            )
+            for (i in 1..4) {
+                view.evaluateJavascript(
+                    "javascript:(function() {" +
+                        "link" + i + "var = '" + preferenceArray[i - 1] + "';" +
+                        "})();", null
+                )
             }
         }
 
-        if(url.contains(".user.js") && view.isShown && userPreferences.javaScriptEnabled){
+        if (url.contains(".user.js") && view.isShown && userPreferences.javaScriptEnabled) {
             val builder = MaterialAlertDialogBuilder(activity)
             builder.setTitle(activity.resources.getString(R.string.install_userscript))
             builder.setMessage(activity.resources.getString(R.string.install_userscript_description))
-            builder.setPositiveButton(R.string.yes){ dialog, which ->
-                view.evaluateJavascript("""(function() {
-                return document.body.innerText;
-                })()""".trimMargin()) {
+            builder.setPositiveButton(R.string.yes) { _, _ ->
+                view.evaluateJavascript(
+                    """(function() { return document.body.innerText; })()""".trimMargin()
+                ) {
                     val extensionSource = it.substring(1, it.length - 1)
                     installExtension(extensionSource)
-                    if(uiController.getTabModel().allTabs.size > 1) {
-                        uiController.tabCloseClicked(uiController.getTabModel().positionOf(uiController.getTabModel().currentTab))
+                    if (uiController.getTabModel().allTabs.size > 1) {
+                        uiController.tabCloseClicked(
+                            uiController.getTabModel().positionOf(
+                                uiController.getTabModel().currentTab
+                            )
+                        )
                     }
                 }
-
             }
-            builder.setNegativeButton("No"){ _, _ ->
-            }
+            builder.setNegativeButton("No") { _, _ -> }
             val dialog: androidx.appcompat.app.AlertDialog = builder.create()
             dialog.show()
         }
 
         if (view.isShown) {
             uiController.updateUrl(url, false)
-
             uiController.setBackButtonEnabled(view.canGoBack())
             uiController.setForwardButtonEnabled(view.canGoForward())
             view.postInvalidate()
         }
 
-        if(userPreferences.forceZoom){
+        if (userPreferences.forceZoom) {
             view.loadUrl(
-                    "javascript:(function() { document.querySelector('meta[name=\"viewport\"]').setAttribute(\"content\",\"width=device-width\"); })();"
+                "javascript:(function() { document.querySelector('meta[name=\"viewport\"]')" +
+                    ".setAttribute(\"content\",\"width=device-width\"); })();"
             )
         }
 
-        if(userPreferences.translateExtension && url.contains("translatetheweb.com/")){
-            val lang: String
-            if(Build.VERSION.SDK_INT > 20){
-                lang = Locale.getDefault().toLanguageTag()
+        if (userPreferences.translateExtension && url.contains("translatetheweb.com/")) {
+            val lang: String = if (Build.VERSION.SDK_INT > 20) {
+                Locale.getDefault().toLanguageTag()
+            } else {
+                Locale.getDefault().displayLanguage
             }
-            else{
-                lang = Locale.getDefault().displayLanguage
-            }
-            when(lang){
+            when (lang) {
                 "pt-BR" -> view.evaluateJavascript("lang = 'pt'; " + translate.provideJs(activity), null)
                 "pt", "português" -> view.evaluateJavascript("lang = 'pt-PT'; " + translate.provideJs(activity), null)
-                else -> view.evaluateJavascript("lang = '" + lang + "'; " + translate.provideJs(activity), null)
+                else -> view.evaluateJavascript("lang = '$lang'; " + translate.provideJs(activity), null)
             }
         }
 
-        if (view.title == null || view.title.isNullOrEmpty()) {
+        if (view.title.isNullOrEmpty()) {
             smartCookieView.titleInfo.setTitle(activity.getString(R.string.untitled))
         } else {
             smartCookieView.titleInfo.setTitle(view.title)
         }
+
         if (smartCookieView.invertPage) {
             view.evaluateJavascript(invertPageJs.provideJs(activity), null)
         }
-        if (userPreferences.darkModeExtension && !WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+
+        if (userPreferences.darkModeExtension &&
+            !WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)
+        ) {
             view.evaluateJavascript(darkMode.provideJs(activity), null)
         }
 
         if (userPreferences.blockMalwareEnabled) {
             val inputStream: InputStream = activity.assets.open("malware.txt")
             val inputString = inputStream.bufferedReader().use { it.readText() }
-            val lines =  inputString.split(",").toTypedArray()
+            val lines = inputString.split(",").toTypedArray()
+
             if (stringContainsItemFromList(url, lines)) {
                 view.settings.javaScriptEnabled = true
-                if(userPreferences.useTheme == AppTheme.LIGHT){
-                    color = ""
-                }
+                if (userPreferences.useTheme == AppTheme.LIGHT) color = ""
                 val title = activity.getString(R.string.malware_title)
                 val reload = activity.getString(R.string.error_reload)
                 val error = activity.getString(R.string.malware_message)
-
-                view.loadDataWithBaseURL(null, buildErrorPage(color, title, error, reload, false), "text/html; charset=utf-8", "UTF-8", null)
+                view.loadDataWithBaseURL(
+                    null,
+                    buildErrorPage(color, title, error, reload, false),
+                    "text/html; charset=utf-8", "UTF-8", null
+                )
                 view.invalidate()
                 view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
             }
 
-
-            if (userPreferences.siteBlockChoice === SiteBlockChoice.WHITELIST) run {
+            if (userPreferences.siteBlockChoice === SiteBlockChoice.WHITELIST) {
                 if (userPreferences.siteBlockNames !== "") {
                     val arrayOfURLs = userPreferences.siteBlockNames
-                    val strgs: Array<String>
-                    if (arrayOfURLs.contains(", ")) {
-                        strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
-                    } else if (arrayOfURLs.contains("," + System.getProperty("line.separator").toString())){
-                        strgs = arrayOfURLs.split("," + System.getProperty("line.separator").toString().toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
-                    }  else{
-                        strgs = arrayOfURLs.split(",".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                    val strgs: Array<String> = when {
+                        arrayOfURLs.contains(", ") ->
+                            arrayOfURLs.split(", ".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+                        arrayOfURLs.contains("," + System.getProperty("line.separator").toString()) ->
+                            arrayOfURLs.split(
+                                "," + System.getProperty("line.separator").toString().toRegex()
+                            ).dropLastWhile { it.isEmpty() }.toTypedArray()
+                        else ->
+                            arrayOfURLs.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                     }
                     if (stringContainsItemFromList(url, strgs)) {
-                        if (url.contains("file:///android_asset") or url.contains("about:blank")) {
-                            return
-                        } else {
-                            if(userPreferences.useTheme == AppTheme.LIGHT){
-                                color = ""
-                            }
-                            view.settings.javaScriptEnabled = true
-                            view.loadDataWithBaseURL(null,  buildErrorPage(color, titleBlocked, "NET::SITE_BLOCKED_BY_LIST", reloadBlocked, false),  "text/html; charset=utf-8", "UTF-8", null)
-                            view.invalidate()
-                            view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
-                        }
+                        if (url.contains("file:///android_asset") || url.contains("about:blank")) return
+                        if (userPreferences.useTheme == AppTheme.LIGHT) color = ""
+                        view.settings.javaScriptEnabled = true
+                        view.loadDataWithBaseURL(
+                            null,
+                            buildErrorPage(color, titleBlocked, "NET::SITE_BLOCKED_BY_LIST", reloadBlocked, false),
+                            "text/html; charset=utf-8", "UTF-8", null
+                        )
+                        view.invalidate()
+                        view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
                     }
                 }
-            }
-            else if (userPreferences.siteBlockChoice === SiteBlockChoice.BLACKLIST) {
+            } else if (userPreferences.siteBlockChoice === SiteBlockChoice.BLACKLIST) {
                 if (userPreferences.siteBlockNames !== "") {
                     val arrayOfURLs = userPreferences.siteBlockNames
-                    var strgs: Array<String> = arrayOfURLs.split(",".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                    var strgs: Array<String> =
+                        arrayOfURLs.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                     if (arrayOfURLs.contains(", ")) {
-                        strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                        strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                     }
                     if (!stringContainsItemFromList(url, strgs)) {
-                        if (url.contains("file:///android_asset") or url.contains("about:blank")) {
-                            return
-                        } else {
-                            if(userPreferences.useTheme == AppTheme.LIGHT){
-                                color = ""
-                            }
-                            view.settings.javaScriptEnabled = true
-                            view.loadDataWithBaseURL(null, buildErrorPage(color, titleBlocked, "NET::SITE_BLOCKED_BY_LIST", reloadBlocked, false), "text/html; charset=utf-8", "UTF-8", null)
-                            view.invalidate()
-                            view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
-                        }
+                        if (url.contains("file:///android_asset") || url.contains("about:blank")) return
+                        if (userPreferences.useTheme == AppTheme.LIGHT) color = ""
+                        view.settings.javaScriptEnabled = true
+                        view.loadDataWithBaseURL(
+                            null,
+                            buildErrorPage(color, titleBlocked, "NET::SITE_BLOCKED_BY_LIST", reloadBlocked, false),
+                            "text/html; charset=utf-8", "UTF-8", null
+                        )
+                        view.invalidate()
+                        view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
                     }
                 }
                 uiController.tabChanged(smartCookieView)
             }
         }
-        if(userPreferences.cookieBlockEnabled){
+
+        if (userPreferences.cookieBlockEnabled) {
             view.evaluateJavascript(cookieBlock.provideJs(activity), null)
         }
 
-        if(userPreferences.noAmp){
+        if (userPreferences.noAmp) {
             view.evaluateJavascript(noAMP.provideJs(activity), null)
         }
     }
 
-        fun stringContainsItemFromList(inputStr: String, items: Array<String>): Boolean {
-            for (i in items.indices) {
-                if (inputStr.contains(items[i])) {
-                    return true
-                }
-            }
-            return false
+    // ─── Helper ───────────────────────────────────────────────────────────────
+
+    fun stringContainsItemFromList(inputStr: String, items: Array<String>): Boolean {
+        for (i in items.indices) {
+            if (inputStr.contains(items[i])) return true
         }
+        return false
+    }
+
+    // ─── onPageCommitVisible ──────────────────────────────────────────────────
 
     override fun onPageCommitVisible(view: WebView?, url: String?) {
         var jsList = emptyList<JavaScriptDatabase.JavaScriptEntry>()
         javascriptRepository.lastHundredVisitedJavaScriptEntries()
-            .subscribe { list ->
-                jsList = list
-            }
+            .subscribe { list -> jsList = list }
 
-        for(i in jsList){
-            for(x in i.include!!.split(",")) {
+        for (i in jsList) {
+            for (x in i.include!!.split(",")) {
                 if (view?.url?.matches(x.toRegex()) == true) {
                     GlobalScope.launch {
                         var requirementJS = ""
                         if (!i.requirements.isNullOrEmpty()) {
-                            val requirementList = (i.requirements as CharSequence).split(",").map { it.trim() }
+                            val requirementList =
+                                (i.requirements as CharSequence).split(",").map { it.trim() }
                             try {
                                 for (req in requirementList) {
                                     val requirementUrl = URL(req)
-                                    val urlConnection: HttpsURLConnection = requirementUrl.openConnection() as HttpsURLConnection
+                                    val urlConnection: HttpsURLConnection =
+                                        requirementUrl.openConnection() as HttpsURLConnection
                                     val br = BufferedReader(InputStreamReader(urlConnection.getInputStream()))
                                     var line: String?
                                     val builder = java.lang.StringBuilder()
@@ -498,57 +566,70 @@ class SmartCookieWebClient(
                                     }
                                     requirementJS += builder
                                 }
-
                                 activity.runOnUiThread {
-                                    view.evaluateJavascript(
-                                        requirementJS, null
-                                    )
+                                    view.evaluateJavascript(requirementJS, null)
                                 }
-
                             } catch (e: IOException) {
                                 e.printStackTrace()
                             }
 
                             activity.runOnUiThread {
                                 view.evaluateJavascript(
-                                    i.code.replace("""\"""", """"""")
+                                    i.code
+                                        .replace("""\"""", """"""")
                                         .replace("\\n", System.lineSeparator())
                                         .replace("\\t", "")
                                         .replace("\\u003C", "<")
                                         .replace("""/"""", """"""")
                                         .replace("""//"""", """/"""")
                                         .replace("""\\'""", """\'""")
-                                        .replace("""\\""""", """\"""""), null
+                                        .replace("""\\""""", """\"""" + "\""),
+                                    null
                                 )
                             }
                         }
                     }
-
                     break
                 }
             }
         }
-            override fun onLoadResource(view: WebView?, url: String?) {
-        // 🔥 Desktop Mode: Isse Instagram ko zabardasti "Computer Screen" ka size milta h
-        if (userPreferences.desktopModeEnabled) {
-            view?.evaluateJavascript("""
-                if(!document.getElementById('ghost-viewport')){
-                    var meta = document.createElement('meta');
-                    meta.id = 'ghost-viewport'; 
-                    meta.name = 'viewport'; 
-                    meta.content = 'width=1280, initial-scale=1.0'; 
-                    document.getElementsByTagName('head')[0].appendChild(meta);
-                }
-            """.trimIndent(), null)
+        super.onPageCommitVisible(view, url)
+    }
+
+    // ─── onLoadResource ───────────────────────────────────────────────────────
+
+    override fun onLoadResource(view: WebView?, url: String?) {
+        if (smartCookieView.toggleDesktop) {
+            view?.evaluateJavascript(setWidenView.provideJs(activity), null)
         }
-        
-        // Purana Cookie Block logic (Ise rehne dena h)
-        if(userPreferences.cookieBlockEnabled){
+
+        // 🔥 Desktop Viewport Force Logic
+        if (userPreferences.desktopModeEnabled) {
+            view?.evaluateJavascript(
+                """
+                (function() {
+                    if (!document.getElementById('ghost-viewport')) {
+                        var meta = document.createElement('meta');
+                        meta.id = 'ghost-viewport';
+                        meta.name = 'viewport';
+                        meta.content = 'width=1280, initial-scale=1.0';
+                        var head = document.getElementsByTagName('head')[0];
+                        if (head) head.appendChild(meta);
+                    }
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+
+        if (userPreferences.cookieBlockEnabled) {
             view?.evaluateJavascript(cookieBlock.provideJs(activity), null)
         }
+
         super.onLoadResource(view, url)
     }
 
+    // ─── Helpers ──────────────────────────────────────────────────────────────
 
     fun isPackageInstalled(packageName: String, packageManager: PackageManager): Boolean {
         return try {
@@ -559,190 +640,178 @@ class SmartCookieWebClient(
         }
     }
 
-    fun reloadIncludingErrorPage(view: WebView?){
-        if(errored){
+    fun reloadIncludingErrorPage(view: WebView?) {
+        if (errored) {
             view?.loadUrl(currentUrl)
-        }
-        else{
+        } else {
             view?.reload()
         }
     }
 
+    // ─── onPageStarted ────────────────────────────────────────────────────────
+
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         errored = true
-        if(isPackageInstalled(activity.resources.getString(R.string.ytdl_package_name), activity.packageManager) && stringContainsItemFromList(url, knownUndetectedVideoUrls)){
+
+        if (isPackageInstalled(
+                activity.resources.getString(R.string.ytdl_package_name),
+                activity.packageManager
+            ) && stringContainsItemFromList(url, knownUndetectedVideoUrls)
+        ) {
             activity.findViewById<FrameLayout>(R.id.download_button).visibility = View.VISIBLE
-        }
-        else{
+        } else {
             activity.findViewById<FrameLayout>(R.id.download_button).visibility = View.GONE
         }
 
-        if(view.settings.userAgentString!!.contains("wv")){
+        if (view.settings.userAgentString!!.contains("wv")) {
             view.settings.userAgentString = view.settings.userAgentString?.replace("; wv", "")
         }
+
         zoomed = false
         first = true
         currentUrl = url
         view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
 
-        if(userPreferences.noAmp){
+        if (userPreferences.noAmp) {
             view.evaluateJavascript(noAMP.provideJs(activity), null)
-            if(url.contains("&ampcf=1")){
-                view.evaluateJavascript("window.location.replace(\"" + url.replace("&ampcf=1", "") + "\");", null)
+            if (url.contains("&ampcf=1")) {
+                view.evaluateJavascript(
+                    "window.location.replace(\"" + url.replace("&ampcf=1", "") + "\");", null
+                )
             }
         }
 
         if (userPreferences.forceHTTPSenabled || userPreferences.preferHTTPSenabled) {
-            if (url.contains("http://")) {
-                if (url.contains("https://")) {
-                    //Secure!
-                    return
+            if (url.contains("http://") && !url.contains("https://")) {
+                view.pauseTimers()
+                val newUrl = url.replace("http://", "https://")
+                if (exists(newUrl)) {
+                    view.resumeTimers()
+                    view.loadUrl(newUrl)
                 } else {
-                    view.pauseTimers()
-                    val newUrl = url.replace("http://", "https://")
-                    if (exists(newUrl)) {
-                        //Supports HTTPS, but SSL isn't used, so redirect to HTTPS
-                        view.resumeTimers()
-
-                        view.loadUrl(newUrl)
-                    } else {
-                        //No HTTPS support
-                        if (userPreferences.forceHTTPSenabled) {
-                            view.settings.javaScriptEnabled = true
-                            if(userPreferences.useTheme == AppTheme.LIGHT){
-                                color = ""
-                            }
-                            val title = activity.getString(R.string.https_title)
-                            val reload = activity.getString(R.string.error_reload)
-                            view.loadDataWithBaseURL(null, buildErrorPage(color, title, "NET::ERR_HTTPS_NOT_SUPPORTED", reload, true), "text/html; charset=utf-8", "UTF-8", null)
-                            view.invalidate()
-                            view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
-                        }
+                    if (userPreferences.forceHTTPSenabled) {
+                        view.settings.javaScriptEnabled = true
+                        if (userPreferences.useTheme == AppTheme.LIGHT) color = ""
+                        val title = activity.getString(R.string.https_title)
+                        val reload = activity.getString(R.string.error_reload)
+                        view.loadDataWithBaseURL(
+                            null,
+                            buildErrorPage(color, title, "NET::ERR_HTTPS_NOT_SUPPORTED", reload, true),
+                            "text/html; charset=utf-8", "UTF-8", null
+                        )
+                        view.invalidate()
+                        view.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
                     }
                 }
             }
         }
 
-            if(url.contains(BuildConfig.APPLICATION_ID + "/files/homepage.html")){
-                view.evaluateJavascript("""(function() {
-                return localStorage.getItem("shouldUpdate");
-                })()""".trimMargin()) {
-                    if(it.substring(1, it.length - 1) == "yes"){
-                        view.evaluateJavascript("""(function() {
-                                return localStorage.getItem("link1");
-                                })()""".trimMargin()) {
-                            userPreferences.link1 = it.substring(1, it.length - 1)
-                            view.evaluateJavascript("""(function() {
-                                                    localStorage.setItem("shouldUpdate", "no");
-                                                    })()"""){}
-                        }
-                        view.evaluateJavascript("""(function() {
-                            return localStorage.getItem("link2");
-                            })()""".trimMargin()) {
-                            userPreferences.link2 = it.substring(1, it.length - 1)
-                            view.evaluateJavascript("""(function() {
-                                            localStorage.setItem("shouldUpdate", "no");
-                                            })()"""){}
-                        }
-                        view.evaluateJavascript("""(function() {
-                            return localStorage.getItem("link3");
-                            })()""".trimMargin()) {
-                            userPreferences.link3 = it.substring(1, it.length - 1)
-                            view.evaluateJavascript("""(function() {
-                                            localStorage.setItem("shouldUpdate", "no");
-                                            })()"""){}
-                        }
-                        view.evaluateJavascript("""(function() {
-                            return localStorage.getItem("link4");
-                            })()""".trimMargin()) {
-                            userPreferences.link4 = it.substring(1, it.length - 1)
-                            view.evaluateJavascript("""(function() {
-                                            localStorage.setItem("shouldUpdate", "no");
-                                            })()"""){}
-                        }
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            uiController.newTabButtonClicked()
-                        }, 100)
+        if (url.contains(BuildConfig.APPLICATION_ID + "/files/homepage.html")) {
+            view.evaluateJavascript(
+                """(function() { return localStorage.getItem("shouldUpdate"); })()"""
+            ) {
+                if (it.substring(1, it.length - 1) == "yes") {
+                    view.evaluateJavascript(
+                        """(function() { return localStorage.getItem("link1"); })()"""
+                    ) { v ->
+                        userPreferences.link1 = v.substring(1, v.length - 1)
+                        view.evaluateJavascript(
+                            """(function() { localStorage.setItem("shouldUpdate", "no"); })()"""
+                        ) {}
                     }
+                    view.evaluateJavascript(
+                        """(function() { return localStorage.getItem("link2"); })()"""
+                    ) { v ->
+                        userPreferences.link2 = v.substring(1, v.length - 1)
+                        view.evaluateJavascript(
+                            """(function() { localStorage.setItem("shouldUpdate", "no"); })()"""
+                        ) {}
+                    }
+                    view.evaluateJavascript(
+                        """(function() { return localStorage.getItem("link3"); })()"""
+                    ) { v ->
+                        userPreferences.link3 = v.substring(1, v.length - 1)
+                        view.evaluateJavascript(
+                            """(function() { localStorage.setItem("shouldUpdate", "no"); })()"""
+                        ) {}
+                    }
+                    view.evaluateJavascript(
+                        """(function() { return localStorage.getItem("link4"); })()"""
+                    ) { v ->
+                        userPreferences.link4 = v.substring(1, v.length - 1)
+                        view.evaluateJavascript(
+                            """(function() { localStorage.setItem("shouldUpdate", "no"); })()"""
+                        ) {}
+                    }
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        uiController.newTabButtonClicked()
+                    }, 100)
                 }
+            }
         }
+
         if (userPreferences.javaScriptChoice === JavaScriptChoice.BLACKLIST) {
             if (userPreferences.javaScriptBlocked !== "" && userPreferences.javaScriptBlocked !== " ") {
                 val arrayOfURLs = userPreferences.javaScriptBlocked
-                var strgs: Array<String> = arrayOfURLs.split(",".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                var strgs: Array<String> =
+                    arrayOfURLs.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                 if (arrayOfURLs.contains(", ")) {
-                    strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                    strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                 }
                 if (!stringContainsItemFromList(url, strgs)) {
-                    if (url.contains("file:///android_asset") or url.contains("about:blank")) {
-                        return
-                    } else {
-                        view.settings.javaScriptEnabled = false
-                    }
-                }
-                else{ return }
+                    if (url.contains("file:///android_asset") || url.contains("about:blank")) return
+                    view.settings.javaScriptEnabled = false
+                } else return
             }
-        }
-        else  if (userPreferences.javaScriptChoice === JavaScriptChoice.WHITELIST) run {
+        } else if (userPreferences.javaScriptChoice === JavaScriptChoice.WHITELIST) {
             if (userPreferences.javaScriptBlocked !== "" && userPreferences.javaScriptBlocked !== " ") {
                 val arrayOfURLs = userPreferences.javaScriptBlocked
-                var strgs: Array<String> = arrayOfURLs.split(",".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                var strgs: Array<String> =
+                    arrayOfURLs.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                 if (arrayOfURLs.contains(", ")) {
-                    strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile({ it.isEmpty() }).toTypedArray()
+                    strgs = arrayOfURLs.split(", ".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                 }
                 if (stringContainsItemFromList(url, strgs)) {
-                    if (url.contains("file:///android_asset") or url.contains("about:blank")) {
-                        return
-                    } else {
-                        view.settings.javaScriptEnabled = false
-                    }
-                }
-                else{
-                    return
-                }
+                    if (url.contains("file:///android_asset") || url.contains("about:blank")) return
+                    view.settings.javaScriptEnabled = false
+                } else return
             }
         }
 
-        if(url.contains("https://homepage")){
+        if (url.contains("https://homepage")) {
             uiController.newTabButtonClicked()
             uiController.tabCloseClicked(0)
         }
 
-        // Only set the SSL state if there isn't an error for the current URL.
-        if (!badsslList.contains(url)) {
-            sslState = if (URLUtil.isHttpsUrl(url)) {
-                SslState.Valid
-            } else {
-                SslState.None
-            }
-        } else{
-            sslState = SslState.Invalid(badsslErrors[badsslList.indexOf(url)])
+        sslState = if (!badsslList.contains(url)) {
+            if (URLUtil.isHttpsUrl(url)) SslState.Valid else SslState.None
+        } else {
+            SslState.Invalid(badsslErrors[badsslList.indexOf(url)])
         }
 
         smartCookieView.titleInfo.setFavicon(null)
         if (smartCookieView.isShown) {
             uiController.updateUrl(url, true)
             uiController.showActionBar()
-            uiController.showActionBar()
         }
         uiController.tabChanged(smartCookieView)
     }
 
+    // ─── HTTP Auth ────────────────────────────────────────────────────────────
+
     override fun onReceivedHttpAuthRequest(
-            view: WebView,
-            handler: HttpAuthHandler,
-            host: String,
-            realm: String
+        view: WebView,
+        handler: HttpAuthHandler,
+        host: String,
+        realm: String
     ) {
         MaterialAlertDialogBuilder(activity).apply {
-            val dialogView = LayoutInflater.from(activity).inflate(R.layout.dialog_auth_request, null)
-
+            val dialogView =
+                LayoutInflater.from(activity).inflate(R.layout.dialog_auth_request, null)
             val realmLabel = dialogView.findViewById<TextView>(R.id.auth_request_realm_textview)
             val name = dialogView.findViewById<EditText>(R.id.auth_request_username_edittext)
             val password = dialogView.findViewById<EditText>(R.id.auth_request_password_edittext)
-
             realmLabel.text = activity.getString(R.string.label_realm, realm)
-
             setView(dialogView)
             setTitle(R.string.title_sign_in)
             setCancelable(true)
@@ -758,67 +827,75 @@ class SmartCookieWebClient(
         }.resizeAndShow()
     }
 
-    override fun onReceivedError(webview: WebView, errorCode: Int, error: String, failingUrl: String) {
-        if(errorCode != -1) {
+    // ─── onReceivedError ──────────────────────────────────────────────────────
+
+    override fun onReceivedError(
+        webview: WebView,
+        errorCode: Int,
+        error: String,
+        failingUrl: String
+    ) {
+        if (errorCode != -1) {
             errored = true
             Thread.sleep(500)
             webview.settings.javaScriptEnabled = true
-            if (userPreferences.useTheme == AppTheme.LIGHT) {
-                color = ""
-            }
-            val reloadCode = "window.location.href = '" + failingUrl + "';"
+            if (userPreferences.useTheme == AppTheme.LIGHT) color = ""
+            val reloadCode = "window.location.href = '$failingUrl';"
             val title = activity.getString(R.string.error_title)
             val reload = activity.getString(R.string.error_reload)
             webview.loadUrl("about:blank")
-            webview.loadDataWithBaseURL(failingUrl, buildErrorPage(color, title, error, reload, true, reloadCode), "text/html", "UTF-8", null)
+            webview.loadDataWithBaseURL(
+                failingUrl,
+                buildErrorPage(color, title, error, reload, true, reloadCode),
+                "text/html", "UTF-8", null
+            )
             uiController.updateUrl(failingUrl, false)
             currentUrl = failingUrl
             urlLoaded = failingUrl
             webview.settings.javaScriptEnabled = userPreferences.javaScriptEnabled
         }
-
     }
+
+    // ─── onScaleChanged ───────────────────────────────────────────────────────
 
     override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
         if (first) {
             initScale = newScale
-            first=false
+            first = false
             zoomed = false
-        }
-        else {
-            if (newScale>oldScale) {
+        } else {
+            if (newScale > oldScale) {
                 zoomed = true
-            }
-            else {
-                if (newScale<initScale) {
-                    zoomed = false
-                }
+            } else {
+                if (newScale < initScale) zoomed = false
             }
         }
 
-      if (view.isShown && smartCookieView.userPreferences.textReflowEnabled) {
-            if (isRunning)
-                return
+        if (view.isShown && smartCookieView.userPreferences.textReflowEnabled) {
+            if (isRunning) return
             val changeInPercent = abs(100 - 100 / zoomScale * newScale)
             if (changeInPercent > 2.5f && !isRunning) {
                 isRunning = view.postDelayed({
                     zoomScale = newScale
-
                     val textScale = (newScale / initScale)
-                    view.evaluateJavascript(textReflowJs.provideJs(activity) + textScale.toString() + " + 'px'; }());") { isRunning = false }
+                    view.evaluateJavascript(
+                        textReflowJs.provideJs(activity) + textScale.toString() + " + 'px'; }());"
+                    ) { isRunning = false }
                 }, 100)
-            }
-            else{
-                view.evaluateJavascript(textReflowJs.provideJs(activity) + "window.document.documentElement.clientWidth + 'px'; }());") { isRunning = false }
+            } else {
+                view.evaluateJavascript(
+                    textReflowJs.provideJs(activity) +
+                        "window.document.documentElement.clientWidth + 'px'; }());"
+                ) { isRunning = false }
             }
         }
     }
 
-    override fun onReceivedSslError(webView: WebView, handler: SslErrorHandler, error: SslError) {
+    // ─── SSL ──────────────────────────────────────────────────────────────────
 
+    override fun onReceivedSslError(webView: WebView, handler: SslErrorHandler, error: SslError) {
         badsslList.add(error.url)
         badsslErrors.add(error)
-
         sslState = SslState.Invalid(error)
 
         when (sslWarningPreferences.recallBehaviorForDomain(webView.url)) {
@@ -828,14 +905,13 @@ class SmartCookieWebClient(
         }
 
         val errorCodeMessageCodes = getAllSslErrorMessageCodes(error)
-
         val stringBuilder = StringBuilder()
         for (messageCode in errorCodeMessageCodes) {
             stringBuilder.append(" - ").append(activity.getString(messageCode)).append('\n')
         }
         val alertMessage = activity.getString(R.string.message_insecure_connection, stringBuilder.toString())
 
-        if(!userPreferences.ssl){
+        if (!userPreferences.ssl) {
             handler.proceed()
             Toast.makeText(activity, errorCodeMessageCodes[0], Toast.LENGTH_SHORT).show()
             return
@@ -851,19 +927,25 @@ class SmartCookieWebClient(
             setOnCancelListener { handler.cancel() }
             setPositiveButton(activity.getString(R.string.action_yes)) { _, _ ->
                 if (dontAskAgain.isChecked) {
-                    sslWarningPreferences.rememberBehaviorForDomain(webView.url.orEmpty(), SslWarningPreferences.Behavior.PROCEED)
+                    sslWarningPreferences.rememberBehaviorForDomain(
+                        webView.url.orEmpty(), SslWarningPreferences.Behavior.PROCEED
+                    )
                 }
                 handler.proceed()
                 webView.clearSslPreferences()
             }
             setNegativeButton(activity.getString(R.string.action_no)) { _, _ ->
                 if (dontAskAgain.isChecked) {
-                    sslWarningPreferences.rememberBehaviorForDomain(webView.url.orEmpty(), SslWarningPreferences.Behavior.CANCEL)
+                    sslWarningPreferences.rememberBehaviorForDomain(
+                        webView.url.orEmpty(), SslWarningPreferences.Behavior.CANCEL
+                    )
                 }
                 handler.cancel()
             }
         }.resizeAndShow()
     }
+
+    // ─── Form Resubmission ────────────────────────────────────────────────────
 
     override fun onFormResubmission(view: WebView, dontResend: Message, resend: Message) {
         MaterialAlertDialogBuilder(activity).apply {
@@ -877,52 +959,48 @@ class SmartCookieWebClient(
                 dontResend.sendToTarget()
             }
         }.resizeAndShow()
-
     }
+
+    // ─── URL Override ─────────────────────────────────────────────────────────
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        shouldOverrideLoading(view, request.url.toString()) || super.shouldOverrideUrlLoading(view, request)
+        shouldOverrideLoading(view, request.url.toString()) ||
+            super.shouldOverrideUrlLoading(view, request)
 
     @Suppress("OverridingDeprecatedMember", "DEPRECATION")
     override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
         shouldOverrideLoading(view, url) || super.shouldOverrideUrlLoading(view, url)
 
     private fun shouldOverrideLoading(view: WebView, url: String): Boolean {
-        // Check if configured proxy is available
-        if (!proxyUtils.isProxyReady(activity)) {
-            // User has been notified
-            return true
-        }
+        if (!proxyUtils.isProxyReady(activity)) return true
 
         val headers = smartCookieView.requestHeaders
 
         if (smartCookieView.isIncognito || userPreferences.blockIntent && !isMailOrIntent(url, view)) {
-
-            // If we are in incognito, immediately load, we don't want the url to leave the app
             return continueLoadingUrl(view, url, headers)
         }
         if (URLUtil.isAboutUrl(url)) {
-            // If this is an about page, immediately load, we don't need to leave the app
             return continueLoadingUrl(view, url, headers)
         }
-
         return if (isMailOrIntent(url, view) || intentUtils.startActivityForUrl(view, url)) {
-            // If it was a mailto: link, or an intent, or could be launched elsewhere, do that
             true
         } else {
-            // If none of the special conditions was met, continue with loading the url
             continueLoadingUrl(view, url, headers)
         }
-
     }
 
-    private fun continueLoadingUrl(webView: WebView, url: String, headers: Map<String, String>): Boolean {
-        if (!URLUtil.isNetworkUrl(url)
-                && !URLUtil.isFileUrl(url)
-                && !URLUtil.isAboutUrl(url)
-                && !URLUtil.isDataUrl(url)
-                && !URLUtil.isJavaScriptUrl(url)) {
+    private fun continueLoadingUrl(
+        webView: WebView,
+        url: String,
+        headers: Map<String, String>
+    ): Boolean {
+        if (!URLUtil.isNetworkUrl(url) &&
+            !URLUtil.isFileUrl(url) &&
+            !URLUtil.isAboutUrl(url) &&
+            !URLUtil.isDataUrl(url) &&
+            !URLUtil.isJavaScriptUrl(url)
+        ) {
             webView.stopLoading()
             return true
         }
@@ -942,20 +1020,17 @@ class SmartCookieWebClient(
             activity.startActivity(i)
             view.reload()
             return true
-        }
-        else if (url.startsWith("tel:")){
+        } else if (url.startsWith("tel:")) {
             val intent = Intent(Intent.ACTION_DIAL)
             intent.data = Uri.parse(url)
             activity.startActivity(intent)
             return true
-        }
-        else if (url.startsWith("intent://") || url.startsWith("gh4b://") || url.contains("://oauth")) {
+        } else if (url.startsWith("intent://") || url.startsWith("gh4b://") || url.contains("://oauth")) {
             val intent = try {
                 Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
             } catch (ignored: URISyntaxException) {
                 null
             }
-
             if (intent != null) {
                 intent.addCategory(Intent.CATEGORY_BROWSABLE)
                 intent.component = null
@@ -965,26 +1040,24 @@ class SmartCookieWebClient(
                 } catch (e: ActivityNotFoundException) {
                     logger.log(TAG, "ActivityNotFoundException")
                 }
-
                 return true
             }
         } else if (URLUtil.isFileUrl(url) && !url.isSpecialUrl()) {
             val file = File(url.replace(FILE, ""))
-
             if (file.exists()) {
-                val newMimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(Utils.guessFileExtension(file.toString()))
-
+                val newMimeType = MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(Utils.guessFileExtension(file.toString()))
                 val intent = Intent(Intent.ACTION_VIEW)
                 intent.flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                val contentUri = FileProvider.getUriForFile(activity, BuildConfig.APPLICATION_ID + ".fileprovider", file)
+                val contentUri = FileProvider.getUriForFile(
+                    activity, BuildConfig.APPLICATION_ID + ".fileprovider", file
+                )
                 intent.setDataAndType(contentUri, newMimeType)
-
                 try {
                     activity.startActivity(intent)
                 } catch (e: Exception) {
                     println("SmartCookieWebClient: cannot open downloaded file")
                 }
-
             } else {
                 activity.snackbar(R.string.message_open_download_fail)
             }
@@ -993,34 +1066,28 @@ class SmartCookieWebClient(
         return false
     }
 
+    // ─── SSL Error Codes ──────────────────────────────────────────────────────
+
     private fun getAllSslErrorMessageCodes(error: SslError): List<Int> {
         val errorCodeMessageCodes = ArrayList<Int>(1)
-
-        if (error.hasError(SslError.SSL_DATE_INVALID)) {
+        if (error.hasError(SslError.SSL_DATE_INVALID))
             errorCodeMessageCodes.add(R.string.message_certificate_date_invalid)
-        }
-        if (error.hasError(SslError.SSL_EXPIRED)) {
+        if (error.hasError(SslError.SSL_EXPIRED))
             errorCodeMessageCodes.add(R.string.message_certificate_expired)
-        }
-        if (error.hasError(SslError.SSL_IDMISMATCH)) {
+        if (error.hasError(SslError.SSL_IDMISMATCH))
             errorCodeMessageCodes.add(R.string.message_certificate_domain_mismatch)
-        }
-        if (error.hasError(SslError.SSL_NOTYETVALID)) {
+        if (error.hasError(SslError.SSL_NOTYETVALID))
             errorCodeMessageCodes.add(R.string.message_certificate_not_yet_valid)
-        }
-        if (error.hasError(SslError.SSL_UNTRUSTED)) {
+        if (error.hasError(SslError.SSL_UNTRUSTED))
             errorCodeMessageCodes.add(R.string.message_certificate_untrusted)
-        }
-        if (error.hasError(SslError.SSL_INVALID)) {
+        if (error.hasError(SslError.SSL_INVALID))
             errorCodeMessageCodes.add(R.string.message_certificate_invalid)
-        }
-
         return errorCodeMessageCodes
     }
 
+    // ─── Companion ────────────────────────────────────────────────────────────
+
     companion object {
-
         private const val TAG = "SmartCookieWebClient"
-
     }
 }
