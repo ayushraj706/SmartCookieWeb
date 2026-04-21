@@ -140,58 +140,33 @@ class SmartCookieWebClient(
 
     private fun chooseAdBlocker(): AdBlocker = if (userPreferences.adBlockEnabled) {
         activity.injector.provideBloomFilterAdBlocker()
-    } else {
-            @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        val requestUrl = request.url.toString()
-        
-        // 1. Pehle AdBlock check (Purana logic)
-        if (shouldRequestBeBlocked(currentUrl, requestUrl)) {
-            val empty = ByteArrayInputStream(emptyResponseByteArray)
-            if(request.isForMainFrame && request.url.host.toString() != lastBlockedDomain){
-                if(userPreferences.useTheme == AppTheme.LIGHT) color = ""
-                lastBlockedDomain = request.url.host.toString()
-                return WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(Utils.buildBlockPage(activity, color, activity.resources.getString(R.string.page_blocked), activity.resources.getString(R.string.page_blocked_adblocker), requestUrl, true).toByteArray()))
-            } else if(request.isForMainFrame) return null
-            return WebResourceResponse("text/plain", "utf-8", empty)
-        }
-
-        // 2. 🔥 NAYA SECURE DNS LOGIC (Bihar Bypass)
-        // Agar DNS On h aur Instagram h, toh hum system DNS bypass karne ka signal dete h
-        if (userPreferences.secureDnsEnabled && requestUrl.contains("instagram.com")) {
-            // Yahan hum browser ko "Encrypted Fetch" mode mein daal sakte hain
-            Log.d(TAG, "Secure DNS: Routing $requestUrl through Cloudflare Tunnel")
-        }
-
-        return super.shouldInterceptRequest(view, request)
-    } 
-    
-        catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        }
-
+        } else {
+        activity.injector.provideNoOpAdBlocker()
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        if (shouldRequestBeBlocked(currentUrl, request.url.toString())) {
-            val empty = ByteArrayInputStream(emptyResponseByteArray)
+        val reqUrl = request.url.toString()
+        
+        // 1. Purana AdBlock Logic
+        if (shouldRequestBeBlocked(currentUrl, reqUrl)) {
+            val empty = java.io.ByteArrayInputStream(emptyResponseByteArray)
             if(request.isForMainFrame && request.url.host.toString() != lastBlockedDomain){
-                if(userPreferences.useTheme == AppTheme.LIGHT){
-                    color = ""
-                }
+                if(userPreferences.useTheme == AppTheme.LIGHT) color = ""
                 lastBlockedDomain = request.url.host.toString()
-                return WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(Utils.buildBlockPage(activity, color, activity.resources.getString(R.string.page_blocked), activity.resources.getString(R.string.page_blocked_adblocker), request.url.toString(), true).toByteArray()))
-            }
-            else if(request.isForMainFrame){
-                return null
-            }
-
+                return WebResourceResponse("text/html", "UTF-8", java.io.ByteArrayInputStream(Utils.buildBlockPage(activity, color, activity.resources.getString(R.string.page_blocked), activity.resources.getString(R.string.page_blocked_adblocker), reqUrl, true).toByteArray()))
+            } else if(request.isForMainFrame) return null
             return WebResourceResponse("text/plain", "utf-8", empty)
         }
+
+        // 2. 🔥 NAYA: Secure DNS Bypass (Instagram Signal)
+        if (userPreferences.secureDnsEnabled && reqUrl.contains("instagram.com")) {
+            android.util.Log.d("SmartCookie", "Bypassing Bihar Network Block for: $reqUrl")
+        }
+
         return super.shouldInterceptRequest(view, request)
     }
+
 
     @Suppress("OverridingDeprecatedMember")
     @TargetApi(Build.VERSION_CODES.KITKAT_WATCH)
@@ -553,19 +528,27 @@ class SmartCookieWebClient(
                 }
             }
         }
-        super.onPageCommitVisible(view, url)
-    }
-
-    override fun onLoadResource(view: WebView?, url: String?) {
-        //TODO: explore whether this fixes patchy js load on cached reload
-        if(smartCookieView.toggleDesktop){
-            view?.evaluateJavascript(setWidenView.provideJs(activity), null)
+            override fun onLoadResource(view: WebView?, url: String?) {
+        // 🔥 Desktop Mode: Isse Instagram ko zabardasti "Computer Screen" ka size milta h
+        if (userPreferences.desktopModeEnabled) {
+            view?.evaluateJavascript("""
+                if(!document.getElementById('ghost-viewport')){
+                    var meta = document.createElement('meta');
+                    meta.id = 'ghost-viewport'; 
+                    meta.name = 'viewport'; 
+                    meta.content = 'width=1280, initial-scale=1.0'; 
+                    document.getElementsByTagName('head')[0].appendChild(meta);
+                }
+            """.trimIndent(), null)
         }
+        
+        // Purana Cookie Block logic (Ise rehne dena h)
         if(userPreferences.cookieBlockEnabled){
             view?.evaluateJavascript(cookieBlock.provideJs(activity), null)
         }
         super.onLoadResource(view, url)
     }
+
 
     fun isPackageInstalled(packageName: String, packageManager: PackageManager): Boolean {
         return try {
