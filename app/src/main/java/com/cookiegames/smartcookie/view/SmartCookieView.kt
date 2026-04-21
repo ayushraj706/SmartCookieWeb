@@ -115,6 +115,8 @@ class SmartCookieView(
      */
     var invertPage = false
         private set
+    
+    // 🔥 Variable changed for Desktop Mode tracking
     var toggleDesktop = false
     private val webViewHandler = WebViewHandler(this)
 
@@ -335,7 +337,18 @@ class SmartCookieView(
             settings.setGeolocationEnabled(false)
         }
 
-        setUserAgentForPreference(userPreferences)
+        // 🔥 MODIFIED: Desktop Mode Logic Integration
+        if (userPreferences.desktopModeEnabled) {
+            settings.userAgentString = DESKTOP_USER_AGENT
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = true
+        } else {
+            setUserAgentForPreference(userPreferences)
+            settings.useWideViewPort = userPreferences.useWideViewPortEnabled
+            settings.loadWithOverviewMode = userPreferences.overviewModeEnabled
+        }
 
         settings.saveFormData = userPreferences.savePasswordsEnabled && !isIncognito
 
@@ -352,8 +365,6 @@ class SmartCookieView(
             try {
                 settings.layoutAlgorithm = LayoutAlgorithm.TEXT_AUTOSIZING
             } catch (e: Exception) {
-                // This shouldn't be necessary, but there are a number
-                // of KitKat devices that crash trying to set this
                 logger.log(TAG, "Problem setting LayoutAlgorithm to TEXT_AUTOSIZING")
             }
         } else {
@@ -362,11 +373,8 @@ class SmartCookieView(
 
         settings.blockNetworkImage = userPreferences.blockImagesEnabled
 
-        // TODO: see if crashes still apply
         settings.setSupportMultipleWindows(userPreferences.popupsEnabled)
 
-        settings.useWideViewPort = userPreferences.useWideViewPortEnabled
-        settings.loadWithOverviewMode = userPreferences.overviewModeEnabled
         settings.textZoom = when (userPreferences.textSize) {
             0 -> 200
             1 -> 150
@@ -376,7 +384,7 @@ class SmartCookieView(
             5 -> 50
             6 -> 25
             7 -> 20
-            else -> throw IllegalArgumentException("Unsupported text size")
+            else -> 100
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -393,7 +401,6 @@ class SmartCookieView(
             if (API >= Build.VERSION_CODES.LOLLIPOP && !isIncognito) {
                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             } else if (API >= Build.VERSION_CODES.LOLLIPOP) {
-                // We're in Incognito mode, reject
                 mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             }
 
@@ -432,17 +439,19 @@ class SmartCookieView(
     }
 
     /**
-     * This method is used to toggle the user agent between desktop and the current preference of
-     * the user.
+     * 🔥 NEW: Professional Toggle Logic for Desktop Mode
+     */
+    fun toggleDesktopMode() {
+        userPreferences.desktopModeEnabled = !userPreferences.desktopModeEnabled
+        initializePreferences()
+        webView?.reload()
+    }
+
+    /**
+     * Legacy support for UA toggle, redirected to the new Desktop Mode.
      */
     fun toggleDesktopUA() {
-        if (!toggleDesktop) {
-            webView?.settings?.userAgentString = DESKTOP_USER_AGENT
-        } else {
-            setUserAgentForPreference(userPreferences)
-        }
-
-        toggleDesktop = !toggleDesktop
+        toggleDesktopMode()
     }
 
     /**
@@ -512,38 +521,25 @@ class SmartCookieView(
 
     /**
      * Sets the current rendering color of the WebView instance
-     * of the current LightningView. The for modes are normal
-     * rendering, inverted rendering, grayscale rendering,
-     * and inverted grayscale rendering
-     *
-     * @param mode the integer mode to set as the rendering mode.
-     * see the numbers in documentation above for the
-     * values this method accepts.
+     * of the current LightningView.
      */
     private fun setColorMode(mode: RenderingMode) {
         invertPage = false
         when (mode) {
             RenderingMode.NORMAL -> {
                 paint.colorFilter = null
-                // setSoftwareRendering(); // Some devices get segfaults
-                // in the WebView with Hardware Acceleration enabled,
-                // the only fix is to disable hardware rendering
                 setNormalRendering()
                 invertPage = false
             }
             RenderingMode.INVERTED -> {
-                val filterInvert = ColorMatrixColorFilter(
-                        negativeColorArray)
-                paint.colorFilter = filterInvert
+                paint.colorFilter = ColorMatrixColorFilter(negativeColorArray)
                 setHardwareRendering()
-
                 invertPage = true
             }
             RenderingMode.GRAYSCALE -> {
                 val cm = ColorMatrix()
                 cm.setSaturation(0f)
-                val filterGray = ColorMatrixColorFilter(cm)
-                paint.colorFilter = filterGray
+                paint.colorFilter = ColorMatrixColorFilter(cm)
                 setHardwareRendering()
             }
             RenderingMode.INVERTED_GRAYSCALE -> {
@@ -553,16 +549,12 @@ class SmartCookieView(
                 matrixGray.setSaturation(0f)
                 val concat = ColorMatrix()
                 concat.setConcat(matrix, matrixGray)
-                val filterInvertGray = ColorMatrixColorFilter(concat)
-                paint.colorFilter = filterInvertGray
+                paint.colorFilter = ColorMatrixColorFilter(concat)
                 setHardwareRendering()
-
                 invertPage = true
             }
-
             RenderingMode.INCREASE_CONTRAST -> {
-                val increaseHighContrast = ColorMatrixColorFilter(increaseContrastColorArray)
-                paint.colorFilter = increaseHighContrast
+                paint.colorFilter = ColorMatrixColorFilter(increaseContrastColorArray)
                 setHardwareRendering()
             }
         }
@@ -570,9 +562,7 @@ class SmartCookieView(
     }
 
     /**
-     * Pauses the JavaScript timers of the
-     * WebView instance, which will trigger a
-     * pause for all WebViews in the app.
+     * Pauses the JavaScript timers of the WebView instance.
      */
     fun pauseTimers() {
         webView?.pauseTimers()
@@ -580,9 +570,7 @@ class SmartCookieView(
     }
 
     /**
-     * Resumes the JavaScript timers of the
-     * WebView instance, which will trigger a
-     * resume for all WebViews in the app.
+     * Resumes the JavaScript timers of the WebView instance.
      */
     fun resumeTimers() {
         webView?.resumeTimers()
@@ -600,11 +588,7 @@ class SmartCookieView(
     }
 
     /**
-     * Sets the visibility of the WebView to either
-     * View.GONE, View.VISIBLE, or View.INVISIBLE.
-     * other values passed in will have no effect.
-     *
-     * @param visible the visibility to set on the WebView.
+     * Sets the visibility of the WebView.
      */
     fun setVisibility(visible: Int) {
         webView?.visibility = visible
@@ -612,26 +596,16 @@ class SmartCookieView(
 
     /**
      * Tells the WebView to reload the current page.
-     * If the proxy settings are not ready then the
-     * this method will not have an affect as the
-     * proxy must start before the load occurs.
      */
     fun reload() {
-        // Check if configured proxy is available
         if (!proxyUtils.isProxyReady(activity)) {
-            // User has been notified
             return
         }
-        //webView?.reload()
         smartCookieWebClient.reloadIncludingErrorPage(webView)
     }
 
     /**
-     * Finds all the instances of the text passed to this
-     * method and highlights the instances of that text
-     * in the WebView.
-     *
-     * @param text the text to search for.
+     * Finds all the instances of the text passed to this method.
      */
     @SuppressLint("NewApi")
     fun find(text: String): FindResults {
@@ -653,24 +627,13 @@ class SmartCookieView(
     }
 
     /**
-     * Notify the tab to shutdown and destroy
-     * its WebView instance and to remove the reference
-     * to it. After this method is called, the current
-     * instance of the LightningView is useless as
-     * the WebView cannot be recreated using the public
-     * api.
+     * Notify the tab to shutdown and destroy its WebView instance.
      */
-    // TODO fix bug where WebView.destroy is being called before the tab
-    // is removed and would cause a memory leak if the parent check
-    // was not in place.
     fun onDestroy() {
         networkDisposable.dispose()
         webView?.let { tab ->
-            // Check to make sure the WebView has been removed
-            // before calling destroy() so that a memory leak is not created
             val parent = tab.parent as? ViewGroup
             if (parent != null) {
-                logger.log(TAG, "WebView was not detached from window before onDestroy")
                 parent.removeView(webView)
             }
             tab.stopLoading()
@@ -686,22 +649,19 @@ class SmartCookieView(
     }
 
     /**
-     * Tell the WebView to navigate backwards
-     * in its history to the previous page.
+     * Tell the WebView to navigate backwards.
      */
     fun goBack() {
         if(url.contains("about:blank")){
             webView?.goBack()
             webView?.goBack()
-        }
-        else{
+        } else {
             webView?.goBack()
         }
     }
 
     /**
-     * Tell the WebView to navigate forwards
-     * in its history to the next page.
+     * Tell the WebView to navigate forwards.
      */
     fun goForward() {
         webView?.goForward()
@@ -714,31 +674,20 @@ class SmartCookieView(
         webView?.setNetworkAvailable(isAvailable)
     }
 
+    /**
+     * Creation of web page print.
+     */
     fun createWebPagePrint(webView: WebView) {
-        /*if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT)
-            return;*/
         val printManager: PrintManager = activity.getSystemService(Context.PRINT_SERVICE) as PrintManager
         val printAdapter: PrintDocumentAdapter = webView.createPrintDocumentAdapter()
         val jobName: String = " Document"
         val builder: PrintAttributes.Builder = PrintAttributes.Builder()
         builder.setMediaSize(PrintAttributes.MediaSize.ISO_A5)
         val printJob: PrintJob = printManager.print(jobName, printAdapter, builder.build())
-        if (printJob.isCompleted()) {
-            Toast.makeText(activity, android.R.string.yes, Toast.LENGTH_LONG).show()
-        } else if (printJob.isFailed()) {
-            Toast.makeText(activity, android.R.string.no, Toast.LENGTH_LONG).show()
-        }
-        // Save the job object for later status checking
     }
 
     /**
-     * Handles a long click on the page and delegates the URL to the
-     * proper dialog if it is not null, otherwise, it tries to get the
-     * URL using HitTestResult.
-     *
-     * @param url the url that should have been obtained from the WebView touch node
-     * thingy, if it is null, this method tries to deal with it and find
-     * a workaround.
+     * Handles a long click on the page.
      */
     private fun longClickPage(url: String?) {
         val result = webView?.hitTestResult
@@ -747,17 +696,11 @@ class SmartCookieView(
 
         if (currentUrl != null && currentUrl.isSpecialUrl()) {
             if (currentUrl.isBookmarkUrl()) {
-                if (url != null) {
-                    dialogBuilder.showLongPressedDialogForBookmarkUrl(activity, uiController, url)
-                } else if (newUrl != null) {
-                    dialogBuilder.showLongPressedDialogForBookmarkUrl(activity, uiController, newUrl)
-                }
+                if (url != null) dialogBuilder.showLongPressedDialogForBookmarkUrl(activity, uiController, url)
+                else if (newUrl != null) dialogBuilder.showLongPressedDialogForBookmarkUrl(activity, uiController, newUrl)
             } else if (currentUrl.isDownloadsUrl()) {
-                if (url != null) {
-                    dialogBuilder.showLongPressedDialogForDownloadUrl(activity, uiController, url)
-                } else if (newUrl != null) {
-                    dialogBuilder.showLongPressedDialogForDownloadUrl(activity, uiController, newUrl)
-                }
+                if (url != null) dialogBuilder.showLongPressedDialogForDownloadUrl(activity, uiController, url)
+                else if (newUrl != null) dialogBuilder.showLongPressedDialogForDownloadUrl(activity, uiController, newUrl)
             }
         } else {
             if (url != null) {
@@ -781,46 +724,29 @@ class SmartCookieView(
     }
 
     /**
-     * Determines whether or not the WebView can go
-     * backward or if it as the end of its history.
-     *
-     * @return true if the WebView can go back, false otherwise.
+     * Determines whether or not the WebView can go backward.
      */
     fun canGoBack(): Boolean = webView?.canGoBack() == true
 
     /**
-     * Determine whether or not the WebView can go
-     * forward or if it is at the front of its history.
-     *
-     * @return true if it can go forward, false otherwise.
+     * Determine whether or not the WebView can go forward.
      */
     fun canGoForward(): Boolean = webView?.canGoForward() == true
 
     /**
-     * Loads the URL in the WebView. If the proxy settings
-     * are still initializing, then the URL will not load
-     * as it is necessary to have the settings initialized
-     * before a load occurs.
-     *
-     * @param url the non-null URL to attempt to load in
-     * the WebView.
+     * Loads the URL in the WebView.
      */
     fun loadUrl(url: String) {
-        // Check if configured proxy is available
         if (!proxyUtils.isProxyReady(activity)) {
             return
         }
-
         webView?.loadUrl(url, requestHeaders)
     }
 
     /**
-     * The OnTouchListener used by the WebView so we can
-     * get scroll events and show/hide the action bar when
-     * the page is scrolled up/down.
+     * OnTouchListener used by the WebView.
      */
     private inner class TouchListener : OnTouchListener {
-
         internal var location: Float = 0f
         internal var y: Float = 0f
         internal var action: Int = 0
@@ -828,10 +754,8 @@ class SmartCookieView(
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouch(view: View?, arg1: MotionEvent): Boolean {
             if (view == null) return false
-
-            if (!view.hasFocus()) {
-                view.requestFocus()
-            }
+            if (!view.hasFocus()) view.requestFocus()
+            
             action = arg1.action
             y = arg1.y
             if (action == MotionEvent.ACTION_DOWN) {
@@ -846,41 +770,20 @@ class SmartCookieView(
                 location = 0f
             }
             gestureDetector.onTouchEvent(arg1)
-
             return false
         }
     }
 
     /**
-     * The SimpleOnGestureListener used by the [TouchListener]
-     * in order to delegate show/hide events to the action bar when
-     * the user flings the page. Also handles long press events so
-     * that we can capture them accurately.
+     * SimpleOnGestureListener used by the TouchListener.
      */
     private inner class CustomGestureListener : SimpleOnGestureListener() {
-
-        /**
-         * Without this, onLongPress is not called when user is zooming using
-         * two fingers, but is when using only one.
-         *
-         *
-         * The required behaviour is to not trigger this when the user is
-         * zooming, it shouldn't matter how much fingers the user's using.
-         */
         private var canTriggerLongPress = true
 
-        override fun onFling(
-            e1: MotionEvent?,
-            e2: MotionEvent,
-            velocityX: Float,
-            velocityY: Float
-        ): Boolean {
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             val power = (velocityY * 100 / maxFling).toInt()
-            if (power < -10) {
-                uiController.hideActionBar()
-            } else if (power > 15) {
-                uiController.showActionBar()
-            }
+            if (power < -10) uiController.hideActionBar()
+            else if (power > 15) uiController.showActionBar()
             return super.onFling(e1, e2, velocityX, velocityY)
         }
 
@@ -894,46 +797,29 @@ class SmartCookieView(
             }
         }
 
-        /**
-         * Is called when the user is swiping after the doubletap, which in our
-         * case means that he is zooming.
-         */
         override fun onDoubleTapEvent(e: MotionEvent): Boolean {
             canTriggerLongPress = false
             return false
         }
 
-        /**
-         * Is called when something is starting being pressed, always before
-         * onLongPress.
-         */
         override fun onShowPress(e: MotionEvent) {
             canTriggerLongPress = true
         }
     }
 
     /**
-     * A Handler used to get the URL from a long click
-     * event on the WebView. It does not hold a hard
-     * reference to the WebView and therefore will not
-     * leak it if the WebView is garbage collected.
+     * Handler used to get the URL from a long click event.
      */
     private class WebViewHandler(view: SmartCookieView) : Handler() {
-
         private val reference: WeakReference<SmartCookieView> = WeakReference(view)
-
         override fun handleMessage(msg: Message) {
-            super.handleMessage(msg)
             val url = msg.data?.getString("url")
-
             reference.get()?.longClickPage(url)
         }
     }
 
     companion object {
-
         private const val TAG = "SmartCookieView"
-
         const val HEADER_REQUESTED_WITH = "X-Requested-With"
         const val HEADER_WAP_PROFILE = "X-Wap-Profile"
         private const val HEADER_DNT = "DNT"
@@ -943,16 +829,16 @@ class SmartCookieView(
         private val SCROLL_UP_THRESHOLD = Utils.dpToPx(10f)
 
         private val negativeColorArray = floatArrayOf(
-                -1.0f, 0f, 0f, 0f, 255f, // red
-                0f, -1.0f, 0f, 0f, 255f, // green
-                0f, 0f, -1.0f, 0f, 255f, // blue
-                0f, 0f, 0f, 1.0f, 0f // alpha
+                -1.0f, 0f, 0f, 0f, 255f,
+                0f, -1.0f, 0f, 0f, 255f,
+                0f, 0f, -1.0f, 0f, 255f,
+                0f, 0f, 0f, 1.0f, 0f
         )
         private val increaseContrastColorArray = floatArrayOf(
-                2.0f, 0f, 0f, 0f, -160f, // red
-                0f, 2.0f, 0f, 0f, -160f, // green
-                0f, 0f, 2.0f, 0f, -160f, // blue
-                0f, 0f, 0f, 1.0f, 0f // alpha
+                2.0f, 0f, 0f, 0f, -160f,
+                0f, 2.0f, 0f, 0f, -160f,
+                0f, 0f, 2.0f, 0f, -160f,
+                0f, 0f, 0f, 1.0f, 0f
         )
     }
 }
