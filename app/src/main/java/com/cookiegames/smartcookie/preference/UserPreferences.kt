@@ -63,6 +63,11 @@ class UserPreferences @Inject constructor(
     var forceHTTPSenabled by preferences.booleanPreference(FORCE_HTTPS, false)
 
     /**
+     * 🔥 Naya Feature: True if Secure DNS (DoH) is enabled, false otherwise.
+     */
+    var secureDnsEnabled by preferences.booleanPreference(SECURE_DNS, false)
+
+    /**
      * True if the browser should block images from being loaded, false otherwise.
      */
     var blockImagesEnabled by preferences.booleanPreference(BLOCK_IMAGES, false)
@@ -317,6 +322,13 @@ class UserPreferences @Inject constructor(
     var searchSuggestionChoice by preferences.intPreference(SEARCH_SUGGESTIONS, 0)
 
     /**
+     * The index of the search suggestion choice.
+     *
+     * @see SearchEngineProvider
+     */
+    var searchSuggestionChoice by preferences.intPreference(SEARCH_SUGGESTIONS, 0)
+
+    /**
      * The index of the ad blocking hosts file source.
      */
     var hostsSource by preferences.intPreference(HOSTS_SOURCE, 0)
@@ -446,6 +458,8 @@ private const val HOSTS_LOCAL_FILE = "hostsLocalFile"
 private const val HOSTS_REMOTE_FILE = "hostsRemoteFile"
 private const val PREFER_HTTPS = "preferHTTPS"
 private const val FORCE_HTTPS = "forceHTTPS"
+// 🔥 Naya Key Constant
+private const val SECURE_DNS = "use_secure_dns"
 private const val SITE_BLOCK = "siteBlock"
 private const val NAVBAR_COLOR = "navcol"
 private const val USE_SITE_BLOCK = "useSiteBlock"
